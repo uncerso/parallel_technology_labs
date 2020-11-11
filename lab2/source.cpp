@@ -80,13 +80,12 @@ ostream & operator << (ostream & out, Measured_time const & t) {
 
 void decomposing_test(Matrix const & mt, vector<size_t> thread_list) {
     cout << "----< Started decomposing test >----\n";
-    size_t step = 10;
-    size_t tests = 0;
+    size_t step = 8;
+    size_t tests = 10;
     for (auto i : thread_list) {
         auto test = [mt = mt, i]() mutable { mt.decompose(i); };
-        tests += step;
-        if (step > 0) --step;
         auto t = measure(test, tests);
+        tests += step;
         cout << i << " threads:\n";
         cout << t << '\n';
     }
@@ -110,12 +109,11 @@ void solving_test(Matrix const & mt, vector<size_t> thread_list, size_t m) {
     }
 }
 
-bool run_test(size_t n, size_t threads) {
+bool run_test(Matrix mt, size_t threads) {
     constexpr double eps = 1e-7;
-    auto mt = GetPositiveSymmetricMatrix(n);
     auto mt_par = mt;
 
-    auto b = GetRandomRow(n);
+    auto b = GetRandomRow(mt.size());
     auto mapped_b = mt.map(b);
 
     mt.decompose();
@@ -148,10 +146,10 @@ int main(int argc, char const *argv[]) {
     size_t n, m;
     cin >> n >> m;
 
-    if (run_test(n, threads))
+    auto mt = GetPositiveSymmetricMatrix(n);
+    if (run_test(mt, threads))
         cout << "Correctness test passed\n";
 
-    auto mt = GetPositiveSymmetricMatrix(n);
     decomposing_test(mt, thread_list);
     mt.decompose();
     solving_test(mt, thread_list, m);
