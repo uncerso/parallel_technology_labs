@@ -78,26 +78,26 @@ ostream & operator << (ostream & out, Measured_time const & t) {
     return out;
 }
 
-void decomposing_test(Matrix const & mt, size_t threads) {
-    cout << "Started decomposing test\n";
+void decomposing_test(Matrix const & mt, vector<size_t> thread_list) {
+    cout << "----< Started decomposing test >----\n";
     size_t tests = 0;
-    for (size_t i = 1; i <= threads; i *= 2) {
+    for (auto i : thread_list) {
         auto test = [mt = mt, i]() mutable { mt.decompose(i); };
-        tests += 15;
+        tests += 10;
         auto t = measure(test, tests);
         cout << i << " threads:\n";
         cout << t << '\n';
     }
 }
 
-void solving_test(Matrix const & mt, size_t threads, size_t m) {
-    cout << "Started solveing test\n";
+void solving_test(Matrix const & mt, vector<size_t> thread_list, size_t m) {
+    cout << "----< Started solving test >----\n";
     vector<Row> right_parts;
     right_parts.reserve(m);
     for (size_t i = 0; i < m; ++i)
         right_parts.push_back(GetRandomRow(mt.size()));
     size_t tests = 0;
-    for (size_t i = 1; i <= threads; i *= 2) {
+    for (auto i : thread_list) {
         auto test = [&mt, right_parts, i]() mutable { mt.solve(right_parts, i); };
         tests += 10;
         auto t = measure(test, tests);
@@ -107,7 +107,7 @@ void solving_test(Matrix const & mt, size_t threads, size_t m) {
 }
 
 bool run_test(size_t n, size_t threads) {
-    constexpr double eps = 1e-8;
+    constexpr double eps = 1e-7;
     auto mt = GetPositiveSymmetricMatrix(n);
     auto mt_par = mt;
 
@@ -123,9 +123,24 @@ bool run_test(size_t n, size_t threads) {
     return GetError(b, mapped_b) < eps;
 }
 
+vector<size_t> GenThreadList(size_t max_threads) {
+    vector<size_t> ans;
+    size_t a = 1, b = 1, n = 1;
+    while (n <= max_threads) {
+        ans.push_back(n);
+        if ((n & (n-1)) == 0) {
+            a = b;
+            b = n;
+        }
+        n += a;
+    }
+    return ans;
+}
+
 int main(int argc, char const *argv[]) {
     auto threads = get_threads(argc, argv);
     omp_set_num_threads(static_cast<int>(threads));
+    auto thread_list = GenThreadList(threads);
     size_t n, m;
     cin >> n >> m;
 
@@ -133,8 +148,8 @@ int main(int argc, char const *argv[]) {
         cout << "Correctness test passed\n";
 
     auto mt = GetPositiveSymmetricMatrix(n);
-    decomposing_test(mt, threads);
+    decomposing_test(mt, thread_list);
     mt.decompose();
-    solving_test(mt, threads, m);
+    solving_test(mt, thread_list, m);
     return 0;
 }
