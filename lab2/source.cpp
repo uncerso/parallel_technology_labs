@@ -80,10 +80,12 @@ ostream & operator << (ostream & out, Measured_time const & t) {
 
 void decomposing_test(Matrix const & mt, vector<size_t> thread_list) {
     cout << "----< Started decomposing test >----\n";
+    size_t step = 10;
     size_t tests = 0;
     for (auto i : thread_list) {
         auto test = [mt = mt, i]() mutable { mt.decompose(i); };
-        tests += 10;
+        tests += step;
+        if (step > 0) --step;
         auto t = measure(test, tests);
         cout << i << " threads:\n";
         cout << t << '\n';
@@ -96,10 +98,12 @@ void solving_test(Matrix const & mt, vector<size_t> thread_list, size_t m) {
     right_parts.reserve(m);
     for (size_t i = 0; i < m; ++i)
         right_parts.push_back(GetRandomRow(mt.size()));
+    size_t step = 10;
     size_t tests = 0;
     for (auto i : thread_list) {
         auto test = [&mt, right_parts, i]() mutable { mt.solve(right_parts, i); };
-        tests += 10;
+        tests += step;
+        if (step > 0) --step;
         auto t = measure(test, tests);
         cout << i << " threads:\n";
         cout << t << '\n';
