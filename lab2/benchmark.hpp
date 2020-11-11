@@ -12,8 +12,9 @@ Measured_time measure(std::function<void()> const & func, size_t amount_of_runs)
     using namespace std;
     Measured_time tm = {0.0, 0.0};
     for (size_t i = 0; i < amount_of_runs; ++i) {
+        auto test_func = func;
         auto time_point1 = chrono::high_resolution_clock::now();
-        func();
+        test_func();
         auto time_point2 = chrono::high_resolution_clock::now();
         auto t = static_cast<double>(chrono::duration_cast<chrono::microseconds>(time_point2 - time_point1).count()) / 1e3;
         tm.mean_time += t;

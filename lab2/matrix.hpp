@@ -16,6 +16,7 @@ public:
 
     void decompose(size_t threads = 1) noexcept;
     void solve(Row & b) const;
+    void solve(vector<Row> & b, size_t threads = 1) const;
 
     Matrix operator * (Matrix const & o) const;
     void transpose() noexcept;

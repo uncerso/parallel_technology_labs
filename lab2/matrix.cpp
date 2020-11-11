@@ -70,16 +70,13 @@ void Matrix::decompose(size_t threads) noexcept {
     for (size_t i = 1; i < size(); ++i)
         mt[i][0] = mt[i][0] / mt[0][0];
 
-    #pragma omp parallel num_threads(threads)
-    {
     for (size_t i = 1; i < size(); ++i) {
         mt[i][i] = sqrt(mt[i][i] - dot_product(mt[i], mt[i], i));
-        #pragma omp for
+        #pragma omp parallel for num_threads(threads)
         for (size_t j = i + 1; j < size(); ++j) {
             mt[j][i] -= dot_product(mt[i], mt[j], i);
             mt[j][i] /= mt[i][i];
         }
-    }
     }
 }
 
@@ -116,6 +113,13 @@ void Matrix::solve(Row & b) const {
     back_map(b);
     back_transpose_map(b);
 }
+
+void Matrix::solve(vector<Row> & b, size_t threads) const {
+    #pragma omp parallel for num_threads(threads)
+    for (size_t i = 0; i < b.size(); ++i)
+        solve(b[i]);
+}
+
 
 bool Matrix::operator==(Matrix const & o) const noexcept {
     if (size() != o.size())

@@ -78,6 +78,34 @@ ostream & operator << (ostream & out, Measured_time const & t) {
     return out;
 }
 
+void decomposing_test(Matrix const & mt, size_t threads) {
+    cout << "Started decomposing test\n";
+    size_t tests = 0;
+    for (size_t i = 1; i <= threads; i *= 2) {
+        auto test = [mt = mt, i]() mutable { mt.decompose(i); };
+        tests += 15;
+        auto t = measure(test, tests);
+        cout << i << " threads:\n";
+        cout << t << '\n';
+    }
+}
+
+void solving_test(Matrix const & mt, size_t threads, size_t m) {
+    cout << "Started solveing test\n";
+    vector<Row> right_parts;
+    right_parts.reserve(m);
+    for (size_t i = 0; i < m; ++i)
+        right_parts.push_back(GetRandomRow(mt.size()));
+    size_t tests = 0;
+    for (size_t i = 1; i <= threads; i *= 2) {
+        auto test = [&mt, right_parts, i]() mutable { mt.solve(right_parts, i); };
+        tests += 10;
+        auto t = measure(test, tests);
+        cout << i << " threads:\n";
+        cout << t << '\n';
+    }
+}
+
 bool run_test(size_t n, size_t threads) {
     constexpr double eps = 1e-8;
     auto mt = GetPositiveSymmetricMatrix(n);
@@ -88,12 +116,8 @@ bool run_test(size_t n, size_t threads) {
 
     mt.decompose();
     mt_par.decompose(threads);
-    if (!(mt == mt_par)) {
-        cout << "WTF\n";
-        cout << mt << '\n';
-        cout << mt_par << '\n';
+    if (!(mt == mt_par))
         return false;
-    }
 
     mt.solve(mapped_b);
     return GetError(b, mapped_b) < eps;
@@ -102,20 +126,15 @@ bool run_test(size_t n, size_t threads) {
 int main(int argc, char const *argv[]) {
     auto threads = get_threads(argc, argv);
     omp_set_num_threads(static_cast<int>(threads));
-    size_t n;
-    cin >> n;
+    size_t n, m;
+    cin >> n >> m;
 
     if (run_test(n, threads))
         cout << "Correctness test passed\n";
 
     auto mt = GetPositiveSymmetricMatrix(n);
-    auto decompose_test = [mt = mt]() mutable { mt.decompose(); };
-    auto decompose_parallel_test = [mt = mt, threads]() mutable { mt.decompose(threads); };
-    auto t1 = measure(decompose_test, 15);
-    auto t2 = measure(decompose_parallel_test, 60);
-    cout << "Single thread:\n";
-    cout << t1 << '\n';
-    cout << "Parallel:\n";
-    cout << t2 << '\n';
+    decomposing_test(mt, threads);
+    mt.decompose();
+    solving_test(mt, threads, m);
     return 0;
 }
