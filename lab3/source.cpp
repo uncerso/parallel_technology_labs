@@ -6,8 +6,7 @@
 #include <iomanip>
 #include <exception>
 
-#include <thread>
-#include <chrono>
+#include <sstream>
 
 using namespace std;
 constexpr int dim_size = 2;
@@ -87,18 +86,18 @@ ostream & operator<<(ostream & out, BlockMatrix const & mt) {
     constexpr size_t w = 4;
     auto n = mt.block_size;
     auto line = string(1 + mt[0].size() * (2 + (w + 1) * n),'-');
-    cout << line << '\n';
+    out << line << '\n';
     for (auto const & block_row : mt) {
         for (size_t i = 0; i < n; ++i) {
-            cout << "| ";
+            out << "| ";
             for (auto const & block : block_row) {
                 for (size_t j = 0; j < n; ++j)
-                    cout << setw(w) << block(i, j) << ' ';
-                cout << "| ";
+                    out << setw(w) << block(i, j) << ' ';
+                out << "| ";
             }
-            cout << '\n';
+            out << '\n';
         }
-        cout << line << '\n';
+        out << line << '\n';
     }
     return out;
 }
@@ -181,6 +180,10 @@ int main(int argc, char *argv[]) {
         for (auto & win : bb_refs)
             win.Fence(0);
 
+        stringstream ss;
+        if (proc_info.rank == 0)
+            ss << *ba << '\n' << *bb << '\n';
+
         st.persistent_a = st.a;
         st.persistent_b = st.b;
         auto pers_a_win = MPI::Win::Create(st.persistent_a.data(), static_cast<MPI::Aint>(st.persistent_a.size()), sizeof(double), MPI::INFO_NULL, comms.row);
@@ -191,6 +194,9 @@ int main(int argc, char *argv[]) {
             int pos = static_cast<int>((proc_info.y + i)%grid_size);
             pers_a_win.Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
             pers_a_win.Fence(0);
+            if (proc_info.rank == 0)
+                ss << st.a << '\n' << st.b << '\n';
+
             st.c.AddProductOf(st.a, st.b);
             pos = static_cast<int>((proc_info.y + 1)%grid_size);
             pers_b_win.Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
@@ -203,7 +209,12 @@ int main(int argc, char *argv[]) {
             win.Fence(0);
         if (proc_info.rank == 0) {
             BlockMatrix bm(*c, block_size);
-            cout << (bm == *bc) << endl;
+            ss << bm << '\n' << *bc << '\n';
+            bool ok = (bm == *bc);
+            if (!ok)
+                cout << ss.str();
+            else 
+                cout << "Ok" << endl;
         }
     } catch (exception const & e) {
         cerr << e.what() << '\n';
