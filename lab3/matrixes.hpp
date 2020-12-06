@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <cstddef>
 
 struct RegularMatrix : std::vector<double> {
     using Base = std::vector<double>;

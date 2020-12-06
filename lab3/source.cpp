@@ -137,7 +137,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (proc_info.rank == 0)
-        cout << "Parallel matrix multiplication program\n";
+        cout << "Parallel matrix multiplication program" << endl;
 
     Comms comms = CreateGridCommunicators(grid_size);
     tie(proc_info.y, proc_info.x) = GetCoords(comms.grid, proc_info.rank);
@@ -176,12 +176,15 @@ int main(int argc, char *argv[]) {
         auto pers_b_win = MPI::Win::Create(st.persistent_b.data(), static_cast<MPI::Aint>(st.persistent_b.size()), sizeof(double), MPI::INFO_NULL, comms.col);
         pers_a_win.Fence(0);
         pers_b_win.Fence(0);
-        for (int i = 0; i < static_cast<int>(grid_size); ++i) {
-            pers_a_win.Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, i, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
-            pers_b_win.Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, i, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
+        for (size_t i = 0; i < grid_size; ++i) {
+            int pos = static_cast<int>((proc_info.y + i)%grid_size);
+            pers_a_win.Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
             pers_a_win.Fence(0);
-            pers_b_win.Fence(0);
             st.c.AddProductOf(st.a, st.b);
+            pos = static_cast<int>((proc_info.y + 1)%grid_size);
+            pers_b_win.Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
+            pers_b_win.Fence(0);
+            st.persistent_b = st.b;
         }
 
         bc_refs[lin_address].Put(st.c.data(), static_cast<int>(st.c.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.c.size()), MPI_DOUBLE);
@@ -189,7 +192,7 @@ int main(int argc, char *argv[]) {
             win.Fence(0);
         if (proc_info.rank == 0) {
             BlockMatrix bm(*c, block_size);
-            cout << (bm == *bc) << '\n';
+            cout << (bm == *bc) << endl;
         }
     } catch (exception const & e) {
         cerr << e.what() << '\n';

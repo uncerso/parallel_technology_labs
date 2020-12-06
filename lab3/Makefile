@@ -1,6 +1,6 @@
 EXTRA_FLAGS:=-Werror -Wall -Wextra -pedantic-errors -Wpedantic -Wcast-align -Wcast-qual -Wconversion -Wctor-dtor-privacy -Wduplicated-branches -Wduplicated-cond -Wextra-semi -Wfloat-equal -Wlogical-op -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual -Wredundant-decls -Wsign-conversion -Wsign-promo
 LIBS:=
-STD:=-std=c++20
+STD:=-std=c++17
 OUT_NAME:=run
 FILES:=source.cpp matrixes.cpp
 CXX:=mpic++
