@@ -35,14 +35,15 @@ struct Comms {
 };
 
 struct State {
-    RegularMatrix persistent_a, persistent_b;
-    RegularMatrix a, b, c;
+    RegularMatrix persistent_a;
+    RegularMatrix a, c;
+    unique_ptr<RegularMatrix> b1, b2;
     State(size_t n) 
         : persistent_a(n)
-        , persistent_b(n)
         , a(n)
-        , b(n)
         , c(n)
+        , b1(make_unique<RegularMatrix>(n))
+        , b2(make_unique<RegularMatrix>(n))
     {}
 };
 
@@ -172,10 +173,11 @@ int main(int argc, char *argv[]) {
         auto bc_refs = GetRefs(bc, comms.grid);
 
         State st(block_size);
+        auto data_size = static_cast<int>(block_size * block_size);
 
         auto lin_address = proc_info.y * grid_size + proc_info.x;
-        ba_refs[lin_address].Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
-        bb_refs[lin_address].Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.b.size()), MPI_DOUBLE);
+        ba_refs[lin_address].Get(st.a.data(), data_size, MPI_DOUBLE, 0, 0, data_size, MPI_DOUBLE);
+        bb_refs[lin_address].Get(st.b1->data(), data_size, MPI_DOUBLE, 0, 0, data_size, MPI_DOUBLE);
         for (auto & win : ba_refs)
             win.Fence(0);
         for (auto & win : bb_refs)
@@ -185,26 +187,28 @@ int main(int argc, char *argv[]) {
         ss << "Log of proc with rank: " << proc_info.rank << '\n';
 
         st.persistent_a = st.a;
-        st.persistent_b = st.b;
-        auto pers_a_win = MPI::Win::Create(st.persistent_a.data(), static_cast<MPI::Aint>(st.persistent_a.size()), sizeof(double), MPI::INFO_NULL, comms.row);
-        auto pers_b_win = MPI::Win::Create(st.persistent_b.data(), static_cast<MPI::Aint>(st.persistent_b.size()), sizeof(double), MPI::INFO_NULL, comms.col);
-        pers_a_win.Fence(0);
-        pers_b_win.Fence(0);
+        auto a_win = MPI::Win::Create(st.persistent_a.data(), data_size, sizeof(double), MPI::INFO_NULL, comms.row);
+        auto b1_win = make_unique<MPI::Win>(MPI::Win::Create(st.b1->data(), data_size, sizeof(double), MPI::INFO_NULL, comms.col));
+        auto b2_win = make_unique<MPI::Win>(MPI::Win::Create(st.b2->data(), data_size, sizeof(double), MPI::INFO_NULL, comms.col));
+        a_win.Fence(0);
+        b1_win->Fence(0);
+        b2_win->Fence(0);
         for (size_t i = 0; i < grid_size; ++i) {
             int pos = static_cast<int>((proc_info.y + i)%grid_size);
-            pers_a_win.Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
-            pers_a_win.Fence(0);
-            ss << st.a << '\n' << st.b << '\n';
+            a_win.Get(st.a.data(), data_size, MPI_DOUBLE, pos, 0, data_size, MPI_DOUBLE);
+            a_win.Fence(0);
+            ss << st.a << '\n' << *st.b1 << '\n' << *st.b2 << '\n';
 
-            st.c.AddProductOf(st.a, st.b);
+            st.c.AddProductOf(st.a, *st.b1);
             pos = static_cast<int>((proc_info.y + 1)%grid_size);
-            pers_b_win.Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
-            pers_b_win.Fence(0);
-            st.persistent_b = st.b;
+            b1_win->Get(st.b2->data(), data_size, MPI_DOUBLE, pos, 0, data_size, MPI_DOUBLE);
+            b1_win->Fence(0);
+            swap(st.b1, st.b2);
+            swap(b1_win, b2_win);
         }
         ss << "======<cut here>======\n";
 
-        bc_refs[lin_address].Put(st.c.data(), static_cast<int>(st.c.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.c.size()), MPI_DOUBLE);
+        bc_refs[lin_address].Put(st.c.data(), data_size, MPI_DOUBLE, 0, 0, data_size, MPI_DOUBLE);
         for (auto & win : bc_refs)
             win.Fence(0);
         {
