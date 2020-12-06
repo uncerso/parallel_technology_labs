@@ -7,6 +7,7 @@
 #include <exception>
 
 #include <sstream>
+#include <fstream>
 
 using namespace std;
 constexpr int dim_size = 2;
@@ -181,8 +182,7 @@ int main(int argc, char *argv[]) {
             win.Fence(0);
 
         stringstream ss;
-        if (proc_info.rank == 0)
-            ss << *ba << '\n' << *bb << '\n';
+        ss << "Log of proc with rank: " << proc_info.rank << '\n';
 
         st.persistent_a = st.a;
         st.persistent_b = st.b;
@@ -194,8 +194,7 @@ int main(int argc, char *argv[]) {
             int pos = static_cast<int>((proc_info.y + i)%grid_size);
             pers_a_win.Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, pos, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
             pers_a_win.Fence(0);
-            if (proc_info.rank == 0)
-                ss << st.a << '\n' << st.b << '\n';
+            ss << st.a << '\n' << st.b << '\n';
 
             st.c.AddProductOf(st.a, st.b);
             pos = static_cast<int>((proc_info.y + 1)%grid_size);
@@ -203,13 +202,23 @@ int main(int argc, char *argv[]) {
             pers_b_win.Fence(0);
             st.persistent_b = st.b;
         }
+        ss << "======<cut here>======\n";
 
         bc_refs[lin_address].Put(st.c.data(), static_cast<int>(st.c.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.c.size()), MPI_DOUBLE);
         for (auto & win : bc_refs)
             win.Fence(0);
+        {
+            ofstream out(to_string(proc_info.rank) + ".log");
+            out << ss.str();
+        }
+        ss.str("");
         if (proc_info.rank == 0) {
             BlockMatrix bm(*c, block_size);
-            ss << bm << '\n' << *bc << '\n';
+            ss << "ba:\n" << *ba << '\n' 
+               << "bb:\n" << *bb << '\n'
+               << "bc:\n" << *bc << '\n'
+               << "bm:\n" << bm << '\n';
+
             bool ok = (bm == *bc);
             if (!ok)
                 cout << ss.str();
