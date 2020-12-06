@@ -6,41 +6,40 @@
 #include <iomanip>
 #include <exception>
 
+#include <thread>
+#include <chrono>
+
 using namespace std;
 constexpr int dim_size = 2;
 
 struct InitGuard {
-    InitGuard(int *argc, char ***argv) {
-        MPI_Init(argc, argv);
+    InitGuard(int argc, char **argv) {
+        MPI::Init(argc, argv);
     }
 
     ~InitGuard() {
-        MPI_Finalize();
+        MPI::Finalize();
     }
 };
 
 struct ProcInfo {
     int rank = 0;
-    union {
-        struct {
-            int x = 0;
-            int y = 0;
-        };
-        int coords[2];
-    };
+    size_t x = 0;
+    size_t y = 0;
 };
 
 struct Comms {
-    MPI_Comm grid;
-    MPI_Comm col;
-    MPI_Comm row;
+    MPI::Cartcomm grid;
+    MPI::Cartcomm col;
+    MPI::Cartcomm row;
 };
 
 struct State {
-    RegularMatrix persistent_a;
+    RegularMatrix persistent_a, persistent_b;
     RegularMatrix a, b, c;
     State(size_t n) 
         : persistent_a(n)
+        , persistent_b(n)
         , a(n)
         , b(n)
         , c(n)
@@ -60,18 +59,18 @@ RegularMatrix GetRandomMatrix(size_t n, size_t max_value = 9) {
     return mt;
 }
 
-Comms CreateGridCommunicators(int grid_size) {
+Comms CreateGridCommunicators(size_t grid_size) {
     Comms comms;
-    int dims[dim_size] = {grid_size, grid_size};
-    int periodic[dim_size] = {0, 0};
+    int dims[dim_size] = {static_cast<int>(grid_size), static_cast<int>(grid_size)};
+    bool periodic[dim_size] = {false, false};
     
-    MPI_Cart_create(MPI_COMM_WORLD, dim_size, dims, periodic, 1, &comms.grid);
+    comms.grid = MPI::COMM_WORLD.Create_cart(dim_size, dims, periodic, true);
 
-    int row_subdims[2] = {0, 1};
-    MPI_Cart_sub(comms.grid, row_subdims, &comms.row);
+    bool row_subdims[2] = {false, true};
+    comms.row = comms.grid.Sub(row_subdims);
     
-    int col_subdims[2] = {1, 0};
-    MPI_Cart_sub(comms.grid, col_subdims, &comms.col);
+    bool col_subdims[2] = {true, false};
+    comms.col = comms.grid.Sub(col_subdims);
     return comms;
 }
 
@@ -93,40 +92,44 @@ ostream & operator<<(ostream & out, BlockMatrix const & mt) {
     return out;
 }
 
-void FillRefs(vector<MPI_Win> & refs, BlockMatrix & mt, MPI_Comm comm) {
+void FillRefs(vector<MPI::Win> & refs, BlockMatrix & mt, MPI::Cartcomm const & comm) {
     refs.reserve(mt.size() * mt.size());
     for (auto & row : mt) {
         for (auto & block : row) {
-            MPI_Win win;
-            cerr << "!!!\n";
-            MPI_Win_create(block.data(), static_cast<int>(block.size()), sizeof(double), MPI_INFO_NULL, comm, &win);
-            MPI_Win_fence(0,win);
-            cerr << "!!!\n";
-            refs.push_back(win);
+            refs.push_back(MPI::Win::Create(block.data(), static_cast<MPI::Aint>(block.size()), sizeof(double), MPI::INFO_NULL, comm));
+            refs.back().Fence(0);
         }
     }
 }
 
-vector<MPI_Win> GetRefs(unique_ptr<BlockMatrix> & mt, MPI_Comm comm) {
-    vector<MPI_Win> refs;
+vector<MPI::Win> GetRefs(unique_ptr<BlockMatrix> & mt, MPI::Cartcomm const & comm) {
+    vector<MPI::Win> refs;
     if (mt)
         FillRefs(refs, *mt, comm);
     else {
         refs.resize(mt->size() * mt->size());
-        for (auto & win : refs)
-            MPI_Win_create(nullptr, 0, 0, MPI_INFO_NULL, comm, &win);
+        for (auto & win : refs) {
+            char c;
+            win = MPI::Win::Create(&c, 1, 1, MPI::INFO_NULL, comm);
+            win.Fence(0);
+        }
     }
     return refs;
 }
 
-int main(int argc, char *argv[]) {
-    InitGuard mpi_guard(&argc, &argv);
-    int proc_num;
-    MPI_Comm_size(MPI_COMM_WORLD, &proc_num);
-    ProcInfo proc_info;
-    MPI_Comm_rank(MPI_COMM_WORLD, &proc_info.rank);
+pair<size_t, size_t> GetCoords(MPI::Cartcomm const & cc, int rank) {
+    int coords[dim_size];
+    cc.Get_coords(rank, dim_size, coords);
+    return {coords[0], coords[1]};
+}
 
-    auto grid_size = static_cast<int>(sqrt(static_cast<double>(proc_num)));
+int main(int argc, char *argv[]) {
+    InitGuard mpi_guard(argc, argv);
+    auto proc_num = static_cast<size_t>(MPI::COMM_WORLD.Get_size());
+    ProcInfo proc_info;
+    proc_info.rank = MPI::COMM_WORLD.Get_rank();
+
+    auto grid_size = static_cast<size_t>(sqrt(static_cast<double>(proc_num)));
     if (proc_num != grid_size*grid_size) {
         if (proc_info.rank == 0)
             cout << "Number of processes must be a perfect square\n";
@@ -137,13 +140,10 @@ int main(int argc, char *argv[]) {
         cout << "Parallel matrix multiplication program\n";
 
     Comms comms = CreateGridCommunicators(grid_size);
-    MPI_Cart_coords(comms.grid, proc_info.rank, dim_size, proc_info.coords);
+    tie(proc_info.y, proc_info.x) = GetCoords(comms.grid, proc_info.rank);
 
-    cout << "Coords: x: " << proc_info.x << ", y: " << proc_info.y << '\n';
-    if (proc_info.rank > 1) return 0;
-
-    size_t matrix_size = static_cast<size_t>(grid_size)*4;
-    size_t block_size = matrix_size / static_cast<size_t>(grid_size);
+    size_t matrix_size = grid_size*2;
+    size_t block_size = matrix_size / grid_size;
     try {
         unique_ptr<RegularMatrix> a, b, c;
         unique_ptr<BlockMatrix> ba, bb, bc;
@@ -156,39 +156,41 @@ int main(int argc, char *argv[]) {
             bc = make_unique<BlockMatrix>(ba->size(), block_size);
             c->AddProductOf(*a, *b);
         // }
-        cerr << "Rank: " << proc_info.rank << " 0\n";
-        MPI_Win win;
-        double d;
-        MPI_Win_create(&d, 1, sizeof(d), MPI_INFO_NULL, comms.grid, &win);
-        cerr << "Rank: " << proc_info.rank << " 1\n";
-        MPI_Win_fence(0,win);
-        cerr << "Rank: " << proc_info.rank << " 2\n";
-        return 0;
         auto ba_refs = GetRefs(ba, comms.grid);
-        auto bb_refs = GetRefs(ba, comms.grid);
+        auto bb_refs = GetRefs(bb, comms.grid);
         auto bc_refs = GetRefs(bc, comms.grid);
 
-        cerr << "Rank: " << proc_info.rank << " 2\n";
         State st(block_size);
 
-        st.c[0] = proc_info.rank;
+        auto lin_address = proc_info.y * grid_size + proc_info.x;
+        ba_refs[lin_address].Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
+        bb_refs[lin_address].Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.b.size()), MPI_DOUBLE);
+        for (auto & win : ba_refs)
+            win.Fence(0);
+        for (auto & win : bb_refs)
+            win.Fence(0);
 
-        auto lin_address = static_cast<size_t>(proc_info.y * grid_size + proc_info.x);
-        MPI_Win_fence(0,ba_refs[lin_address]);
-        MPI_Win_fence(0,bb_refs[lin_address]);
-        MPI_Win_fence(0,bc_refs[lin_address]);
-        cerr << "Rank: " << proc_info.rank << " 3\n";
-        MPI_Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.a.size()), MPI_DOUBLE, ba_refs[lin_address]);
-        MPI_Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.b.size()), MPI_DOUBLE, bb_refs[lin_address]);
-        MPI_Put(st.c.data(), static_cast<int>(st.c.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.c.size()), MPI_DOUBLE, bc_refs[lin_address]);
-        cerr << "Rank: " << proc_info.rank << " 4\n";
-        MPI_Win_fence(0,ba_refs[lin_address]);
-        MPI_Win_fence(0,bb_refs[lin_address]);
-        MPI_Win_fence(0,bc_refs[lin_address]);
-        cerr << "Rank: " << proc_info.rank << " 5\n";
         st.persistent_a = st.a;
-        if (proc_info.rank == 0)
-            cout << (BlockMatrix(*c, block_size) == *bc) << '\n';
+        st.persistent_b = st.b;
+        auto pers_a_win = MPI::Win::Create(st.persistent_a.data(), static_cast<MPI::Aint>(st.persistent_a.size()), sizeof(double), MPI::INFO_NULL, comms.row);
+        auto pers_b_win = MPI::Win::Create(st.persistent_b.data(), static_cast<MPI::Aint>(st.persistent_b.size()), sizeof(double), MPI::INFO_NULL, comms.col);
+        pers_a_win.Fence(0);
+        pers_b_win.Fence(0);
+        for (int i = 0; i < static_cast<int>(grid_size); ++i) {
+            pers_a_win.Get(st.a.data(), static_cast<int>(st.a.size()), MPI_DOUBLE, i, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
+            pers_b_win.Get(st.b.data(), static_cast<int>(st.b.size()), MPI_DOUBLE, i, 0, static_cast<int>(st.a.size()), MPI_DOUBLE);
+            pers_a_win.Fence(0);
+            pers_b_win.Fence(0);
+            st.c.AddProductOf(st.a, st.b);
+        }
+
+        bc_refs[lin_address].Put(st.c.data(), static_cast<int>(st.c.size()), MPI_DOUBLE, 0, 0, static_cast<int>(st.c.size()), MPI_DOUBLE);
+        for (auto & win : bc_refs)
+            win.Fence(0);
+        if (proc_info.rank == 0) {
+            BlockMatrix bm(*c, block_size);
+            cout << (bm == *bc) << '\n';
+        }
     } catch (exception const & e) {
         cerr << e.what() << '\n';
         return 0;
