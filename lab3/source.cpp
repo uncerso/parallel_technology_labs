@@ -47,7 +47,7 @@ struct State {
 };
 
 // generate random matrix with elements from `-max_value` to `max_value`
-RegularMatrix GetRandomMatrix(size_t n, size_t max_value = 9) {
+RegularMatrix GetRandomMatrix(size_t n, size_t max_value = 99) {
     RegularMatrix mt(n);
     random_device rd;
     mt19937 next_rand(rd());
@@ -77,17 +77,28 @@ Comms CreateGridCommunicators(size_t grid_size) {
 ostream & operator<<(ostream & out, RegularMatrix const & mt) {
     for (size_t i = 0; i < mt.n; ++i) {
         for (size_t j = 0; j < mt.n; ++j)
-            out << setw(3) << mt(i, j) << ' ';
+            out << setw(4) << mt(i, j) << ' ';
         out << '\n';
     }
     return out;
 }
 
 ostream & operator<<(ostream & out, BlockMatrix const & mt) {
+    constexpr size_t w = 4;
+    auto n = mt.block_size;
+    auto line = string(1 + mt[0].size() * (2 + (w + 1) * n),'-');
+    cout << line << '\n';
     for (auto const & block_row : mt) {
-        for (auto const & block : block_row) {
-            cout << block << '\n';
+        for (size_t i = 0; i < n; ++i) {
+            cout << "| ";
+            for (auto const & block : block_row) {
+                for (size_t j = 0; j < n; ++j)
+                    cout << setw(w) << block(i, j) << ' ';
+                cout << "| ";
+            }
+            cout << '\n';
         }
+        cout << line << '\n';
     }
     return out;
 }
