@@ -3,11 +3,7 @@
 #include <random>
 #include <memory>
 #include <mpi.h>
-#include <iomanip>
 #include <exception>
-
-#include <sstream>
-#include <fstream>
 
 using namespace std;
 constexpr int dim_size = 2;
@@ -47,6 +43,38 @@ struct State {
     {}
 };
 
+class Win {
+    MPI::Win win;
+    MPI::Cartcomm const & comm;
+public:
+    Win(RegularMatrix const & mt, MPI::Cartcomm const & comm) 
+        : win(MPI::Win::Create(mt.data(), static_cast<MPI::Aint>(mt.size()), sizeof(double), MPI::INFO_NULL, comm))
+        , comm(comm)
+    {}
+
+    void Get(RegularMatrix & to, size_t target_rank) const {
+        auto data_size = static_cast<int>(to.size());
+        win.Get(to.data(), data_size, MPI_DOUBLE, static_cast<int>(target_rank), 0, data_size, MPI_DOUBLE);
+    }
+
+    void Put(RegularMatrix & from, size_t target_rank) const {
+        auto data_size = static_cast<int>(from.size());
+        win.Put(from.data(), data_size, MPI_DOUBLE, static_cast<int>(target_rank), 0, data_size, MPI_DOUBLE);
+    }
+
+    void Fence() const {
+        win.Fence(0);
+    }
+};
+
+struct WinVector : vector<Win> {
+    void FenceAll() const {
+        for (auto const & win : *this)
+            win.Fence();
+    }
+};
+
+
 // generate random matrix with elements from `-max_value` to `max_value`
 RegularMatrix GetRandomMatrix(size_t n, size_t max_value = 99) {
     RegularMatrix mt(n);
@@ -75,55 +103,13 @@ Comms CreateGridCommunicators(size_t grid_size) {
     return comms;
 }
 
-ostream & operator<<(ostream & out, RegularMatrix const & mt) {
-    for (size_t i = 0; i < mt.n; ++i) {
-        for (size_t j = 0; j < mt.n; ++j)
-            out << setw(4) << mt(i, j) << ' ';
-        out << '\n';
-    }
-    return out;
-}
-
-ostream & operator<<(ostream & out, BlockMatrix const & mt) {
-    constexpr size_t w = 4;
-    auto n = mt.block_size;
-    auto line = string(1 + mt[0].size() * (2 + (w + 1) * n),'-');
-    out << line << '\n';
-    for (auto const & block_row : mt) {
-        for (size_t i = 0; i < n; ++i) {
-            out << "| ";
-            for (auto const & block : block_row) {
-                for (size_t j = 0; j < n; ++j)
-                    out << setw(w) << block(i, j) << ' ';
-                out << "| ";
-            }
-            out << '\n';
-        }
-        out << line << '\n';
-    }
-    return out;
-}
-
-void FillRefs(vector<MPI::Win> & refs, BlockMatrix & mt, MPI::Cartcomm const & comm) {
+WinVector GetRefs(BlockMatrix const & mt, MPI::Cartcomm const & comm) {
+    WinVector refs;
     refs.reserve(mt.size() * mt.size());
     for (auto & row : mt) {
         for (auto & block : row) {
-            refs.push_back(MPI::Win::Create(block.data(), static_cast<MPI::Aint>(block.size()), sizeof(double), MPI::INFO_NULL, comm));
-            refs.back().Fence(0);
-        }
-    }
-}
-
-vector<MPI::Win> GetRefs(unique_ptr<BlockMatrix> & mt, MPI::Cartcomm const & comm) {
-    vector<MPI::Win> refs;
-    if (mt)
-        FillRefs(refs, *mt, comm);
-    else {
-        refs.resize(mt->size() * mt->size());
-        for (auto & win : refs) {
-            char c;
-            win = MPI::Win::Create(&c, 1, 1, MPI::INFO_NULL, comm);
-            win.Fence(0);
+            refs.emplace_back(block, comm);
+            refs.back().Fence();
         }
     }
     return refs;
@@ -154,80 +140,62 @@ int main(int argc, char *argv[]) {
     Comms comms = CreateGridCommunicators(grid_size);
     tie(proc_info.y, proc_info.x) = GetCoords(comms.grid, proc_info.rank);
 
-    size_t matrix_size = grid_size*2;
+    size_t matrix_size = grid_size*15;
     size_t block_size = matrix_size / grid_size;
     try {
-        unique_ptr<RegularMatrix> a, b, c;
+        unique_ptr<RegularMatrix> c;
         unique_ptr<BlockMatrix> ba, bb, bc;
-        // if (proc_info.rank == 0) {
-            a = make_unique<RegularMatrix>(GetRandomMatrix(matrix_size));
-            b = make_unique<RegularMatrix>(GetRandomMatrix(matrix_size));
+        if (proc_info.rank == 0) {
+            auto a = make_unique<RegularMatrix>(GetRandomMatrix(matrix_size));
+            auto b = make_unique<RegularMatrix>(GetRandomMatrix(matrix_size));
             c = make_unique<RegularMatrix>(matrix_size);
             ba = make_unique<BlockMatrix>(*a, block_size);
             bb = make_unique<BlockMatrix>(*b, block_size);
-            bc = make_unique<BlockMatrix>(ba->size(), block_size);
+            bc = make_unique<BlockMatrix>(grid_size, block_size);
             c->AddProductOf(*a, *b);
-        // }
-        auto ba_refs = GetRefs(ba, comms.grid);
-        auto bb_refs = GetRefs(bb, comms.grid);
-        auto bc_refs = GetRefs(bc, comms.grid);
+        } else {
+            ba = make_unique<BlockMatrix>(grid_size, block_size);
+            bb = make_unique<BlockMatrix>(grid_size, block_size);
+            bc = make_unique<BlockMatrix>(grid_size, block_size);
+        }
+        auto ba_refs = GetRefs(*ba, comms.grid);
+        auto bb_refs = GetRefs(*bb, comms.grid);
+        auto bc_refs = GetRefs(*bc, comms.grid);
 
         State st(block_size);
-        auto data_size = static_cast<int>(block_size * block_size);
 
         auto lin_address = proc_info.y * grid_size + proc_info.x;
-        ba_refs[lin_address].Get(st.a.data(), data_size, MPI_DOUBLE, 0, 0, data_size, MPI_DOUBLE);
-        bb_refs[lin_address].Get(st.b1->data(), data_size, MPI_DOUBLE, 0, 0, data_size, MPI_DOUBLE);
-        for (auto & win : ba_refs)
-            win.Fence(0);
-        for (auto & win : bb_refs)
-            win.Fence(0);
-
-        stringstream ss;
-        ss << "Log of proc with rank: " << proc_info.rank << '\n';
+        ba_refs[lin_address].Get(st.a, 0);
+        bb_refs[lin_address].Get(*st.b1, 0);
+        ba_refs.FenceAll();
+        bb_refs.FenceAll();
 
         st.persistent_a = st.a;
-        auto a_win = MPI::Win::Create(st.persistent_a.data(), data_size, sizeof(double), MPI::INFO_NULL, comms.row);
-        auto b1_win = make_unique<MPI::Win>(MPI::Win::Create(st.b1->data(), data_size, sizeof(double), MPI::INFO_NULL, comms.col));
-        auto b2_win = make_unique<MPI::Win>(MPI::Win::Create(st.b2->data(), data_size, sizeof(double), MPI::INFO_NULL, comms.col));
-        a_win.Fence(0);
-        b1_win->Fence(0);
-        b2_win->Fence(0);
+        Win a_win(st.persistent_a, comms.row);
+        auto b1_win = make_unique<Win>(*st.b1, comms.col);
+        auto b2_win = make_unique<Win>(*st.b2, comms.col);
+        a_win.Fence();
+        b1_win->Fence();
+        b2_win->Fence();
         for (size_t i = 0; i < grid_size; ++i) {
-            int pos = static_cast<int>((proc_info.y + i)%grid_size);
-            a_win.Get(st.a.data(), data_size, MPI_DOUBLE, pos, 0, data_size, MPI_DOUBLE);
-            a_win.Fence(0);
-            ss << st.a << '\n' << *st.b1 << '\n' << *st.b2 << '\n';
+            a_win.Get(st.a, (proc_info.y + i) % grid_size);
+            a_win.Fence();
 
             st.c.AddProductOf(st.a, *st.b1);
-            pos = static_cast<int>((proc_info.y + 1)%grid_size);
-            b1_win->Get(st.b2->data(), data_size, MPI_DOUBLE, pos, 0, data_size, MPI_DOUBLE);
-            b1_win->Fence(0);
+
+            b1_win->Get(*st.b2, (proc_info.y + 1) % grid_size);
+            b1_win->Fence();
             swap(st.b1, st.b2);
             swap(b1_win, b2_win);
+            comms.col.Barrier();
         }
-        ss << "======<cut here>======\n";
 
-        bc_refs[lin_address].Put(st.c.data(), data_size, MPI_DOUBLE, 0, 0, data_size, MPI_DOUBLE);
-        for (auto & win : bc_refs)
-            win.Fence(0);
-        {
-            ofstream out(to_string(proc_info.rank) + ".log");
-            out << ss.str();
-        }
-        ss.str("");
+        bc_refs[lin_address].Put(st.c, 0);
+        bc_refs.FenceAll();
+
         if (proc_info.rank == 0) {
             BlockMatrix bm(*c, block_size);
-            ss << "ba:\n" << *ba << '\n' 
-               << "bb:\n" << *bb << '\n'
-               << "bc:\n" << *bc << '\n'
-               << "bm:\n" << bm << '\n';
-
-            bool ok = (bm == *bc);
-            if (!ok)
-                cout << ss.str();
-            else 
-                cout << "Ok" << endl;
+            cout << (bm == *bc) << endl;
         }
     } catch (exception const & e) {
         cerr << e.what() << '\n';

@@ -1,6 +1,8 @@
 #include "matrixes.hpp"
 #include <cassert>
 #include <stdexcept>
+#include <iomanip>
+#include <ostream>
 
 void RegularMatrix::AddProductOf(RegularMatrix const & lhs, RegularMatrix const & rhs) {
     assert(lhs.n == rhs.n);
@@ -35,5 +37,34 @@ BlockMatrix::BlockMatrix(RegularMatrix const & mt, size_t const block_size)
             }
         }
     }
+}
+
+std::ostream & operator<<(std::ostream & out, RegularMatrix const & mt) {
+    for (size_t i = 0; i < mt.n; ++i) {
+        for (size_t j = 0; j < mt.n; ++j)
+            out << std::setw(4) << mt(i, j) << ' ';
+        out << '\n';
+    }
+    return out;
+}
+
+std::ostream & operator<<(std::ostream & out, BlockMatrix const & mt) {
+    constexpr size_t w = 4;
+    auto n = mt.block_size;
+    auto line = std::string(1 + mt[0].size() * (2 + (w + 1) * n),'-');
+    out << line << '\n';
+    for (auto const & block_row : mt) {
+        for (size_t i = 0; i < n; ++i) {
+            out << "| ";
+            for (auto const & block : block_row) {
+                for (size_t j = 0; j < n; ++j)
+                    out << std::setw(w) << block(i, j) << ' ';
+                out << "| ";
+            }
+            out << '\n';
+        }
+        out << line << '\n';
+    }
+    return out;
 }
 

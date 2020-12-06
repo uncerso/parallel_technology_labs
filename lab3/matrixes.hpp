@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstddef>
+#include <iosfwd>
 
 struct RegularMatrix : std::vector<double> {
     using Base = std::vector<double>;
@@ -25,3 +26,6 @@ struct BlockMatrix : std::vector<std::vector<RegularMatrix>> {
     BlockMatrix(size_t const blocks, size_t const block_size);
     BlockMatrix(RegularMatrix const & mt, size_t const block_size);
 };
+
+std::ostream & operator<<(std::ostream & out, RegularMatrix const & mt);
+std::ostream & operator<<(std::ostream & out, BlockMatrix const & mt);
