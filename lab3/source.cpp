@@ -3,6 +3,7 @@
 #include <random>
 #include <memory>
 #include <exception>
+#include <chrono>
 
 using namespace std;
 constexpr int dim_size = 2;
@@ -131,9 +132,6 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
-        if (proc_info.rank == 0)
-            cout << "Parallel matrix multiplication program" << endl;
-
         Comms comms = CreateGridCommunicators(grid_size);
         tie(proc_info.y, proc_info.x) = GetCoords(comms.grid, proc_info.rank);
 
@@ -143,14 +141,22 @@ int main(int argc, char *argv[]) {
         State st(block_size);
         auto pack = GenMatrixPack(proc_info.rank, block_size, grid_size);
 
+        comms.grid.Barrier();
+        auto start_time = chrono::high_resolution_clock::now();
+
         LoadData(st, pack, comms, proc_info);
+
+        comms.grid.Barrier();
 
         Multiply(st, comms, proc_info);
 
         StoreData(st, pack, comms, proc_info);
 
+        comms.grid.Barrier();
+        auto end_time = chrono::high_resolution_clock::now();
+
         if (proc_info.rank == 0)
-            cout << "Done" << endl;
+            cout << static_cast<double>(chrono::duration_cast<chrono::microseconds>(end_time-start_time).count()) / 1e3 << endl;
     } catch (exception const & e) {
         cerr << e.what() << '\n';
         return 0;
