@@ -1,9 +1,10 @@
 #include "helpers.hpp"
+#include "benchmark.hpp"
 #include <iostream>
 #include <random>
 #include <memory>
 #include <exception>
-#include <chrono>
+#include <string_view>
 
 using namespace std;
 constexpr int dim_size = 2;
@@ -118,12 +119,46 @@ void Multiply(State & st, Comms const & comms, ProcInfo const & proc_info) {
     }
 }
 
+ostream & operator << (ostream & out, Measured_time const & t) {
+    out << "Mean time: " << t.mean_time << " ms, Standard deviation: " << t.standard_deviation << " ms";
+    return out;
+}
+
+struct Args {
+    bool run_mpi;
+    size_t matrix_size;
+    size_t measure_times;
+    Args(int argc, char *argv[]) {
+        if (argc != 4)
+            throw std::invalid_argument("Usage: mpiexec -n <#processes> run <use_mpi:0|1> <matrix size: uint> <measure times: uint>");
+        run_mpi = string_view(argv[1]) == "1";
+        matrix_size = stoull(argv[2]);
+        measure_times = stoull(argv[3]);
+    }
+};
+
+void NoMPIRun(Args args) {
+    auto a = GetRandomMatrix(args.matrix_size);
+    auto b = GetRandomMatrix(args.matrix_size);
+    RegularMatrix c(args.matrix_size);
+    auto time = measure([&a, &b, c] () mutable {
+        c.AddProductOf(a, b);
+    }, args.measure_times);
+    cout << time << endl;
+}
+
 int main(int argc, char *argv[]) {
     InitGuard mpi_guard(argc, argv);
     try {
+        Args args(argc, argv);
         ProcInfo proc_info;
         auto proc_num = static_cast<size_t>(MPI::COMM_WORLD.Get_size());
         proc_info.rank = MPI::COMM_WORLD.Get_rank();
+        if (!args.run_mpi) {
+            if (proc_info.rank == 0)
+                NoMPIRun(args);
+            return 0;
+        }
 
         auto grid_size = static_cast<size_t>(sqrt(static_cast<double>(proc_num)));
         if (proc_num != grid_size*grid_size) {
@@ -132,33 +167,28 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
+        size_t block_size = args.matrix_size / grid_size;
+
         Comms comms = CreateGridCommunicators(grid_size);
         tie(proc_info.y, proc_info.x) = GetCoords(comms.grid, proc_info.rank);
-
-        size_t matrix_size = grid_size*15;
-        size_t block_size = matrix_size / grid_size;
 
         State st(block_size);
         auto pack = GenMatrixPack(proc_info.rank, block_size, grid_size);
 
         comms.grid.Barrier();
-        auto start_time = chrono::high_resolution_clock::now();
 
-        LoadData(st, pack, comms, proc_info);
-
-        comms.grid.Barrier();
-
-        Multiply(st, comms, proc_info);
-
-        StoreData(st, pack, comms, proc_info);
-
-        comms.grid.Barrier();
-        auto end_time = chrono::high_resolution_clock::now();
+        auto time = measure([&st, &pack, &comms, &proc_info] {
+            LoadData(st, pack, comms, proc_info);
+            comms.grid.Barrier();
+            Multiply(st, comms, proc_info);
+            StoreData(st, pack, comms, proc_info);
+            comms.grid.Barrier();
+        }, args.measure_times);
 
         if (proc_info.rank == 0)
-            cout << static_cast<double>(chrono::duration_cast<chrono::microseconds>(end_time-start_time).count()) / 1e3 << endl;
+            cout << time << endl;
     } catch (exception const & e) {
-        cerr << e.what() << '\n';
+        cerr << "Error: "<< e.what() << '\n';
         return 0;
     } catch (...) {
         cerr << "Unknown error :(\n";
