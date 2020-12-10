@@ -25,21 +25,20 @@ RegularMatrix GetRandomMatrix(size_t n, size_t max_value = 99) {
 Comms CreateGridCommunicators(size_t grid_size) {
     Comms comms;
     comms.grid_size = grid_size;
-
     int dims[dim_size] = {static_cast<int>(grid_size), static_cast<int>(grid_size)};
-    bool periodic[dim_size] = {false, false};
-    
-    comms.grid = MPI::COMM_WORLD.Create_cart(dim_size, dims, periodic, true);
+    int periodic[dim_size] = {0, 0};
 
-    bool row_subdims[2] = {false, true};
-    comms.row = comms.grid.Sub(row_subdims);
-    
-    bool col_subdims[2] = {true, false};
-    comms.col = comms.grid.Sub(col_subdims);
+    MPI_Cart_create(MPI_COMM_WORLD, dim_size, dims, periodic, 1, &comms.grid);
+
+    int row_subdims[2] = {0, 1};
+    MPI_Cart_sub(comms.grid, row_subdims, &comms.row);
+
+    int col_subdims[2] = {1, 0};
+    MPI_Cart_sub(comms.grid, col_subdims, &comms.col);
     return comms;
 }
 
-WinVector GetRefs(BlockMatrix const & mt, MPI::Cartcomm const & comm) {
+WinVector GetRefs(BlockMatrix const & mt, MPI_Comm const & comm) {
     WinVector refs;
     refs.reserve(mt.size() * mt.size());
     for (auto & row : mt) {
@@ -51,9 +50,9 @@ WinVector GetRefs(BlockMatrix const & mt, MPI::Cartcomm const & comm) {
     return refs;
 }
 
-pair<size_t, size_t> GetCoords(MPI::Cartcomm const & cc, int rank) {
+pair<size_t, size_t> GetCoords(MPI_Comm const & cc, int rank) {
     int coords[dim_size];
-    cc.Get_coords(rank, dim_size, coords);
+    MPI_Cart_coords(cc, rank, dim_size, coords);
     return {coords[0], coords[1]};
 }
 
@@ -115,7 +114,7 @@ void Multiply(State & st, Comms const & comms, ProcInfo const & proc_info) {
         b1_win->Fence();
         swap(st.b1, st.b2);
         swap(b1_win, b2_win);
-        comms.col.Barrier();
+        MPI_Barrier(comms.col);
     }
 }
 
@@ -148,12 +147,13 @@ void NoMPIRun(Args args) {
 }
 
 int main(int argc, char *argv[]) {
-    InitGuard mpi_guard(argc, argv);
+    InitGuard mpi_guard(&argc, &argv);
     try {
         Args args(argc, argv);
+        int proc_num;
         ProcInfo proc_info;
-        auto proc_num = static_cast<size_t>(MPI::COMM_WORLD.Get_size());
-        proc_info.rank = MPI::COMM_WORLD.Get_rank();
+        MPI_Comm_size(MPI_COMM_WORLD, &proc_num);
+        MPI_Comm_rank(MPI_COMM_WORLD, &proc_info.rank);
         if (!args.run_mpi) {
             if (proc_info.rank == 0)
                 NoMPIRun(args);
@@ -161,7 +161,7 @@ int main(int argc, char *argv[]) {
         }
 
         auto grid_size = static_cast<size_t>(sqrt(static_cast<double>(proc_num)));
-        if (proc_num != grid_size*grid_size) {
+        if (static_cast<size_t>(proc_num) != grid_size*grid_size) {
             if (proc_info.rank == 0)
                 cout << "Number of processes must be a perfect square\n";
             return 0;
@@ -175,14 +175,14 @@ int main(int argc, char *argv[]) {
         State st(block_size);
         auto pack = GenMatrixPack(proc_info.rank, block_size, grid_size);
 
-        comms.grid.Barrier();
+        MPI_Barrier(comms.grid);
 
         auto time = measure([&st, &pack, &comms, &proc_info] {
             LoadData(st, pack, comms, proc_info);
-            comms.grid.Barrier();
+            MPI_Barrier(comms.grid);
             Multiply(st, comms, proc_info);
             StoreData(st, pack, comms, proc_info);
-            comms.grid.Barrier();
+            MPI_Barrier(comms.grid);
         }, args.measure_times);
 
         if (proc_info.rank == 0)
