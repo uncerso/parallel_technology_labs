@@ -142,7 +142,7 @@ void NoMPIRun(Args args) {
     RegularMatrix c(args.matrix_size);
     auto time = measure([&a, &b, c] () mutable {
         c.RecursiveAddProductOf(a, b);
-    }, args.measure_times);
+    }, args.measure_times, true);
     cout << time << endl;
 }
 
@@ -183,7 +183,7 @@ int main(int argc, char *argv[]) {
             Multiply(st, comms, proc_info);
             StoreData(st, pack, comms, proc_info);
             MPI_Barrier(comms.grid);
-        }, args.measure_times);
+        }, args.measure_times, proc_info.rank == 0);
 
         if (proc_info.rank == 0)
             cout << time << endl;
