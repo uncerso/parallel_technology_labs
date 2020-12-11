@@ -141,7 +141,7 @@ void NoMPIRun(Args args) {
     auto b = GetRandomMatrix(args.matrix_size);
     RegularMatrix c(args.matrix_size);
     auto time = measure([&a, &b, c] () mutable {
-        c.AddProductOf(a, b);
+        c.RecursiveAddProductOf(a, b);
     }, args.measure_times);
     cout << time << endl;
 }

@@ -16,6 +16,7 @@ struct RegularMatrix : std::vector<double> {
     double operator() (size_t y, size_t x) const noexcept { return (*this)[y * n + x]; }
 
     void AddProductOf(RegularMatrix const & lhs, RegularMatrix const & rhs);
+    void RecursiveAddProductOf(RegularMatrix const & lhs, RegularMatrix const & rhs);
 };
 
 struct BlockMatrix : std::vector<std::vector<RegularMatrix>> {
