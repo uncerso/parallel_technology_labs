@@ -108,7 +108,7 @@ void Multiply(State & st, Comms const & comms, ProcInfo const & proc_info) {
         a_win.Get(st.a, (proc_info.y + i) % grid_size);
         a_win.Fence();
 
-        st.c.AddProductOf(st.a, *st.b1);
+        st.c.RecursiveAddProductOf(st.a, *st.b1);
 
         b1_win->Get(*st.b2, (proc_info.y + 1) % grid_size);
         b1_win->Fence();
